@@ -16,7 +16,7 @@
 //! (`speech.delta`, `audio.chunk` with `audio.data`/`mimeType`/`captionMaxChars`),
 //! plus a structured `reply`, an `action`, and a terminal `turn.completed`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{body::Body, extract::State, http::header, response::IntoResponse, Json};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -32,6 +32,8 @@ use chasm_fnv_bridge::BridgeConfig;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::fnv_bridge::InProcessChasmClient;
+use crate::nervous::{Decision, Stimulus};
+use crate::radio::RadioFx;
 use crate::{AppState, WebError, WebResult};
 
 /// `POST /api/game/v1/turn` request body. The fields needed to build a
@@ -84,11 +86,19 @@ fn default_true() -> bool {
 /// stream out the instant they are produced — the whole point of the endpoint.
 struct HttpStreamSink {
     tx: UnboundedSender<String>,
+    /// Radio effect for this turn's audio when the NPC talks over comms.
+    radio: Option<Mutex<RadioFx>>,
 }
 
 impl HttpStreamSink {
     fn new(tx: UnboundedSender<String>) -> Self {
-        Self { tx }
+        Self { tx, radio: None }
+    }
+
+    /// Route every audio chunk of this turn through the radio effect.
+    fn with_radio(mut self, static_level: f32) -> Self {
+        self.radio = Some(Mutex::new(RadioFx::new(static_level)));
+        self
     }
 
     /// Serialize one event value to a `\n`-terminated NDJSON line and enqueue it.
@@ -148,11 +158,18 @@ impl TurnSink for HttpStreamSink {
                 "text": caption,
             }));
         }
+        // Over the radio: band-limit + static (stateful across this turn's chunks).
+        let radio_audio = self.radio.as_ref().and_then(|fx| {
+            fx.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .process_wav(&chunk.audio)
+        });
+        let audio = radio_audio.as_deref().unwrap_or(&chunk.audio);
         let mut event = json!({
             "type": "audio.chunk",
             "requestId": request.request_id,
             "index": index,
-            "audio": { "data": STANDARD.encode(&chunk.audio) },
+            "audio": { "data": STANDARD.encode(audio) },
             "mimeType": if chunk.mime_type.is_empty() { "audio/wav" } else { &chunk.mime_type },
             "text": caption,
             "npcKey": line.native_npc_key,
@@ -166,6 +183,16 @@ impl TurnSink for HttpStreamSink {
         // carry without re-parsing `key=value` strings.
         if !extra_meta.is_empty() {
             event["metadata"] = meta_lines_to_object(extra_meta);
+            // Voice direction cue ("whispering") — a bridge may also lower the
+            // playback volume or pick an animation from it.
+            if let Some(cue) = event["metadata"].get("delivery").cloned() {
+                event["delivery"] = cue;
+            }
+        }
+        if self.radio.is_some() {
+            // Comms audio: play it in the player's ear, not from the NPC's body.
+            event["channel"] = json!("radio");
+            event["nonPositional"] = json!(true);
         }
         // Dead silence: when the client hung up mid-turn (the plugin abandons a reply
         // whose speaker died), abort the turn here instead of generating the rest of
@@ -203,6 +230,23 @@ impl TurnSink for HttpStreamSink {
         if !gm.should_trigger {
             return false;
         }
+        // The chosen action's parameters (e.g. `target`), and — when the target
+        // names something the NPC can see — that landmark with its coordinates.
+        let parameters = gm
+            .actions
+            .iter()
+            .find(|a| a.get("action_id").and_then(Value::as_str) == Some(gm.action_id.as_str()))
+            .and_then(|a| a.get("parameters").cloned())
+            .unwrap_or_else(|| json!({}));
+        let target = if gm.target.trim().is_empty() {
+            parameters.get("target").and_then(Value::as_str).unwrap_or("").to_string()
+        } else {
+            gm.target.clone()
+        };
+        let landmarks = crate::senses::landmarks_from_metadata(&Value::Object(
+            request.metadata.clone().into_iter().collect(),
+        ));
+        let resolved_target = crate::senses::resolve_landmark_name(&target, &landmarks);
         self.emit(json!({
             "type": "action",
             "requestId": request.request_id,
@@ -211,6 +255,9 @@ impl TurnSink for HttpStreamSink {
             "shouldTrigger": gm.should_trigger,
             "actionId": gm.action_id,
             "reason": gm.reason,
+            "target": target,
+            "parameters": parameters,
+            "resolvedTarget": resolved_target,
             "actor": {
                 "npcKey": actor.native_npc_key,
                 "npcName": actor.native_npc_name,
@@ -284,7 +331,8 @@ pub async fn turn(
 ) -> WebResult<impl IntoResponse> {
     // Load the same bridge config the in-process fold uses, so NPC mapping, live-chat
     // identity, action books and TTS overrides match the file path exactly.
-    let config = load_bridge_config(&state)?;
+    let mut config = load_bridge_config(&state)?;
+    let settings = AppSettings::load(&state.config.settings_path);
 
     let mut request = build_native_request(&req);
 
@@ -303,13 +351,107 @@ pub async fn turn(
         request.player_text = transcript;
     }
 
+    // Senses: lines this NPC overheard since its last turn, and an optional
+    // screenshot of its view (described once, never forwarded/persisted).
+    let listener = turn_npc_name(&request);
+    let metadata_value = Value::Object(request.metadata.clone().into_iter().collect());
+    crate::senses::record_inline_heard(&metadata_value, &listener);
+    request.metadata.remove("heard");
+    if let Some(shot) = take_screenshot(&mut request) {
+        if let Some(description) =
+            crate::senses::describe_screenshot(&state, &settings, &listener, &shot).await
+        {
+            let vision = request
+                .metadata
+                .entry("vision".to_string())
+                .or_insert_with(|| json!({}));
+            if vision.is_object() {
+                vision["scene_description"] = json!(description);
+            }
+        }
+    }
+
+    // Radio: a radio-capable NPC beyond the radio distance is heard over comms
+    // instead of being out of earshot.
+    let radio = radio_for_turn(&settings, &request);
+    if radio {
+        config.native_max_distance_meters = f64::MAX;
+        request.metadata.insert("radio".to_string(), json!(true));
+    }
+
+    let (tx, rx) = mpsc::unbounded_channel::<String>();
+
+    // Nervous system: react before the brain. A reflex streams to the bridge
+    // immediately (before any LLM work); a bare command ends the turn there.
+    if let Some(decision) = nervous_pass(&state, &settings, &request).await {
+        let request_id = request.request_id.clone();
+        let _ = tx.send(ndjson(&json!({
+            "type": "nervous",
+            "requestId": request_id,
+            "npcName": listener,
+            "decision": decision,
+        })));
+        if let Some(fired) = &decision.reflex {
+            let _ = tx.send(ndjson(&json!({
+                "type": "reflex",
+                "requestId": request_id,
+                "npcKey": request.npc_key,
+                "npcName": listener,
+                "action": fired.id,
+                "description": fired.description,
+                "target": fired.target,
+                "confidence": decision.confidence,
+                "source": decision.source,
+                "latencyMs": decision.latency_ms,
+            })));
+        }
+        let brain_skipped = decision.layer == "ignore"
+            || (decision.layer == "reflex" && !decision.reply);
+        if brain_skipped {
+            let _ = tx.send(ndjson(&json!({
+                "type": "reply",
+                "requestId": request_id,
+                "status": "1",
+                "npcKey": request.npc_key,
+                "npcName": listener,
+                "text": "",
+                "audioFilename": "",
+                "error": "",
+                "playerText": request.player_text,
+                "gameMaster": {
+                    "action": decision.reflex.as_ref().map(|r| r.id.as_str()).unwrap_or("NONE"),
+                    "confidence": format!("{:.2}", decision.confidence),
+                    // Already fired as the `reflex` event above.
+                    "shouldTrigger": false,
+                },
+            })));
+            let _ = tx.send(ndjson(&json!({ "type": "turn.completed" })));
+            drop(tx);
+            return Ok(ndjson_response(rx));
+        }
+        if let Some(note) = decision.brain_note() {
+            request.metadata.insert(
+                "nervous".to_string(),
+                json!({
+                    "note": note,
+                    "layer": decision.layer,
+                    "refused": decision.refused,
+                    "reflex": decision.reflex.as_ref().map(|r| r.id.clone()),
+                }),
+            );
+        }
+    }
+
     // Drive the turn on a task, streaming each emitted line through the channel as
     // it is produced (so opener audio flows while the rest of the line generates).
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let task_state = state.clone();
+    let radio_static = settings.voice_direction.radio_static;
     tokio::spawn(async move {
         let client: Arc<dyn ChasmClient> = Arc::new(InProcessChasmClient::new(task_state));
-        let sink = HttpStreamSink::new(tx.clone());
+        let mut sink = HttpStreamSink::new(tx.clone());
+        if radio {
+            sink = sink.with_radio(radio_static);
+        }
         if let Err(error) =
             chasm_fnv_bridge::run_turn_with_sink(&config, client.as_ref(), &sink, &request)
                 .await
@@ -326,16 +468,135 @@ pub async fn turn(
         }
     });
 
+    Ok(ndjson_response(rx))
+}
+
+/// The streaming NDJSON response body draining `rx`.
+fn ndjson_response(
+    mut rx: mpsc::UnboundedReceiver<String>,
+) -> ([(header::HeaderName, &'static str); 1], Body) {
     let body_stream = async_stream::stream! {
         while let Some(line) = rx.recv().await {
             yield Ok::<String, std::convert::Infallible>(line);
         }
     };
-
-    Ok((
+    (
         [(header::CONTENT_TYPE, "application/x-ndjson")],
         Body::from_stream(body_stream),
-    ))
+    )
+}
+
+/// One `\n`-terminated NDJSON line.
+fn ndjson(event: &Value) -> String {
+    format!("{}\n", serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string()))
+}
+
+/// The NPC this turn is about: the request's NPC, else the crosshair / first
+/// nearby NPC.
+fn turn_npc_name(request: &NativeRequest) -> String {
+    if !request.npc_name.trim().is_empty() {
+        return request.npc_name.trim().to_string();
+    }
+    let nearby = nearby_list(request);
+    nearby
+        .iter()
+        .find(|npc| npc.get("under_crosshair").and_then(Value::as_bool) == Some(true))
+        .or_else(|| nearby.first())
+        .and_then(|npc| npc.get("npc_name").or_else(|| npc.get("characterId")))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn nearby_list(request: &NativeRequest) -> Vec<Value> {
+    request
+        .metadata
+        .get("targeting")
+        .and_then(|t| t.get("nearby_npcs"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn metadata_flag(request: &NativeRequest, key: &str) -> bool {
+    request.metadata.get(key).is_some_and(|v| {
+        v.as_bool() == Some(true) || v.as_i64() == Some(1) || v.as_str() == Some("1")
+    })
+}
+
+/// Removes `metadata.vision.screenshot_base64` (large; described, not stored).
+fn take_screenshot(request: &mut NativeRequest) -> Option<String> {
+    let vision = request.metadata.get_mut("vision")?.as_object_mut()?;
+    let shot = vision.remove("screenshot_base64")?;
+    shot.as_str().map(str::to_string).filter(|s| !s.trim().is_empty())
+}
+
+/// Whether this turn's NPC speaks over the radio: the bridge forced it
+/// (`metadata.radio`), or the NPC is radio-capable (`metadata.radio_capable`)
+/// and farther than the radio distance.
+fn radio_for_turn(settings: &AppSettings, request: &NativeRequest) -> bool {
+    let voice = &settings.voice_direction;
+    if !voice.radio_enabled {
+        return false;
+    }
+    if metadata_flag(request, "radio") {
+        return true;
+    }
+    metadata_flag(request, "radio_capable")
+        && chasm_fnv_bridge::npc::native_distance_meters(request) > f64::from(voice.radio_distance_m)
+}
+
+/// Runs the nervous system on the player's words, when it applies to this
+/// turn: enabled, real player speech, and not an admin / reaction / synthetic
+/// (world event, errand report) turn — those are already decided.
+async fn nervous_pass(
+    state: &AppState,
+    settings: &AppSettings,
+    request: &NativeRequest,
+) -> Option<Decision> {
+    if !settings.nervous_system.enabled
+        || request.player_text.trim().is_empty()
+        || metadata_flag(request, "nervous_skip")
+        || chasm_fnv_bridge::admin::is_admin_request(request)
+        || request.metadata.get("reaction").is_some_and(Value::is_object)
+        || metadata_flag(request, "errand_completion")
+        || metadata_flag(request, "world_event")
+    {
+        return None;
+    }
+    let metadata = Value::Object(request.metadata.clone().into_iter().collect());
+    let nearby_npcs = nearby_list(request)
+        .iter()
+        .filter_map(|npc| npc.get("npc_name").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut situation: Vec<String> = Vec::new();
+    let place = [&request.location.minor, &request.location.major]
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !place.is_empty() {
+        situation.push(format!("Location: {place}."));
+    }
+    if metadata_flag(request, "in_combat") {
+        situation.push("In combat right now.".to_string());
+    }
+    if let Some(objective) = metadata.get("objective").and_then(Value::as_str) {
+        situation.push(format!("Current objective: {objective}."));
+    }
+    let stimulus = Stimulus {
+        npc_key: request.npc_key.clone(),
+        npc_name: turn_npc_name(request),
+        kind: "speech".to_string(),
+        speaker: "player".to_string(),
+        text: request.player_text.clone(),
+        landmarks: crate::senses::landmarks_from_metadata(&metadata),
+        nearby_npcs,
+        situation: situation.join(" "),
+        reflexes: None,
+    };
+    Some(crate::nervous::decide(state, settings, &stimulus).await)
 }
 
 /// Load the bridge config (the same `nvbridge.config.json` the in-process fold and
@@ -612,4 +873,165 @@ mod tests {
         assert_eq!(event["queued"], false);
         assert_eq!(event["actor"]["npcKey"], "sony");
     }
+
+    /// A mock that streams a voice-directed line and records each TTS body.
+    struct DirectedMock {
+        line: String,
+        synth_bodies: std::sync::Mutex<Vec<Value>>,
+    }
+
+    #[async_trait]
+    impl ChasmClient for DirectedMock {
+        async fn live_chat_exists(&self, _id: &str) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        async fn create_live_chat(&self, _body: &Value) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn presence(&self, _id: &str, _body: &Value) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn recognize(&self, _body: &Value) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        async fn generate_headless(&self, _body: &Value) -> anyhow::Result<Value> {
+            Ok(Value::Null)
+        }
+        async fn save_sync_event(&self, _body: &Value) -> anyhow::Result<Value> {
+            Ok(Value::Null)
+        }
+        async fn event_log_ingest(&self, _body: &Value) -> anyhow::Result<Value> {
+            Ok(Value::Null)
+        }
+        fn generate_stream_events<'a>(
+            &'a self,
+            _id: &str,
+            _body: &Value,
+        ) -> Pin<Box<dyn Stream<Item = anyhow::Result<Value>> + Send + 'a>> {
+            let text = self.line.clone();
+            Box::pin(async_stream::try_stream! {
+                yield json!({ "type": "speaker.start", "speaker": { "participantId": "npc:easy_pete" } });
+                yield json!({ "type": "speech.delta", "text": text });
+                yield json!({ "type": "live.completed", "turn": { "message": { "content": text } } });
+            })
+        }
+        async fn synthesize_stream(
+            &self,
+            body: &Value,
+            on_chunk: &mut (dyn FnMut(AudioChunk) -> anyhow::Result<()> + Send),
+        ) -> anyhow::Result<usize> {
+            self.synth_bodies.lock().unwrap().push(body.clone());
+            on_chunk(AudioChunk {
+                index: Some(0),
+                audio: b"RIFFmock".to_vec(),
+                mime_type: "audio/wav".into(),
+                text: None,
+                caption_max_chars: None,
+            })?;
+            Ok(1)
+        }
+    }
+
+    /// Voice direction end to end through run_turn: the leading cue becomes the
+    /// TTS `instructions`, vocal events stay in the spoken text, and neither
+    /// reaches the caption, the chunk event, or the structured reply.
+    #[tokio::test]
+    async fn voice_direction_cue_reaches_tts_not_captions() {
+        let client = DirectedMock {
+            line: "[whispering] Grunt at two o'clock. (sigh) Stay low.".into(),
+            synth_bodies: Default::default(),
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let sink = HttpStreamSink::new(tx);
+        chasm_fnv_bridge::run_turn_with_sink(&test_config(), &client, &sink, &test_request())
+            .await
+            .expect("turn should succeed");
+        drop(sink);
+
+        let bodies = client.synth_bodies.lock().unwrap().clone();
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0]["instructions"], "whispering");
+        assert_eq!(bodies[0]["text"], "Grunt at two o'clock. (sigh) Stay low.");
+
+        let mut events: Vec<Value> = Vec::new();
+        while let Some(line) = rx.recv().await {
+            events.push(serde_json::from_str(line.trim()).unwrap());
+        }
+        let chunk = events.iter().find(|e| e["type"] == "audio.chunk").unwrap();
+        assert_eq!(chunk["delivery"], "whispering");
+        assert_eq!(chunk["text"], "Grunt at two o'clock. Stay low.");
+        let reply = events.iter().find(|e| e["type"] == "reply").unwrap();
+        assert_eq!(reply["text"], "Grunt at two o'clock. Stay low.");
+    }
+
+    /// Radio: chunks are run through the comms effect and flagged for 2D playback.
+    #[tokio::test]
+    async fn radio_sink_filters_audio_and_flags_channel() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let sink = HttpStreamSink::new(tx).with_radio(0.05);
+        let pcm: Vec<u8> = (0..2400i32)
+            .flat_map(|i| (((i as f32 * 0.26).sin() * 8000.0) as i16).to_le_bytes())
+            .collect();
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&24_000u32.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&pcm);
+        let line = GeneratedLine {
+            participant_id: "npc:kevin".into(),
+            native_npc_key: "kevin".into(),
+            native_npc_name: "Kevin".into(),
+            character_name: "Kevin".into(),
+            character_id: "Kevin".into(),
+            text: "Contact, left side.".into(),
+            turn: Value::Null,
+        };
+        let chunk = AudioChunk {
+            index: Some(0),
+            audio: wav.clone(),
+            mime_type: "audio/wav".into(),
+            text: None,
+            caption_max_chars: None,
+        };
+        sink.audio_chunk(&test_request(), &line, &chunk, 0, &[]).unwrap();
+        drop(sink);
+        let mut events: Vec<Value> = Vec::new();
+        while let Some(line) = rx.recv().await {
+            events.push(serde_json::from_str(line.trim()).unwrap());
+        }
+        let audio = events.iter().find(|e| e["type"] == "audio.chunk").unwrap();
+        assert_eq!(audio["channel"], "radio");
+        assert_eq!(audio["nonPositional"], true);
+        let bytes = STANDARD.decode(audio["audio"]["data"].as_str().unwrap()).unwrap();
+        assert!(bytes.starts_with(b"RIFF"));
+        assert!(bytes.len() > wav.len(), "squelch burst prepended on the first chunk");
+        assert_ne!(&bytes[44..44 + 200], &wav[44..44 + 200]);
+    }
+
+    #[test]
+    fn radio_turns_need_capability_and_distance() {
+        let settings = AppSettings::default();
+        let mut request = test_request();
+        assert!(!radio_for_turn(&settings, &request), "2m away, not radio-capable");
+        request.metadata.insert("radio_capable".into(), json!(true));
+        assert!(!radio_for_turn(&settings, &request), "radio-capable but close");
+        request.metadata.insert(
+            "targeting".into(),
+            json!({ "nearby_npcs": [{ "npc_key": "easy_pete", "npc_name": "Easy Pete", "distance_m": 60.0 }] }),
+        );
+        assert!(radio_for_turn(&settings, &request), "radio-capable and far");
+        let mut forced = test_request();
+        forced.metadata.insert("radio".into(), json!("1"));
+        assert!(radio_for_turn(&settings, &forced));
+    }
+
 }

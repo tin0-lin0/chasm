@@ -272,6 +272,7 @@ fn tts_spec_for_engine(
                 .and_then(build_tts_spec)
                 .or_else(|| build_qwen3_spec(state, port))
         }
+        crate::BREEZE_TTS_ENGINE => build_breeze_spec(state, port),
         // "" (none selected) or any unknown engine → no spec, never a default.
         _ => None,
     }
@@ -309,6 +310,56 @@ fn build_qwen3_spec(state: &Arc<AppState>, port: u16) -> Option<RuntimeSpec> {
             script.display().to_string(),
             "--voices-dir".to_string(),
             voices_dir.display().to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+        ],
+        cwd: Some(state.config.workspace_root.display().to_string()),
+        env: Vec::new(),
+    })
+}
+
+/// Builds the Breeze TTS 2 adapter [`RuntimeSpec`]: `scripts/breeze_tts_server.py`
+/// (stdlib only) on the TTS port, forwarding to Breeze's own streaming API at
+/// `CHASM_BREEZE_URL` (default `http://127.0.0.1:7860`; run Breeze natively on
+/// Linux, in WSL2, or from its Docker image). Uses the `engines/breeze-tts-2`
+/// venv python when present, else the system Python.
+fn build_breeze_spec(state: &Arc<AppState>, port: u16) -> Option<RuntimeSpec> {
+    let script = state
+        .config
+        .workspace_root
+        .join("scripts")
+        .join("breeze_tts_server.py");
+    if !script.exists() {
+        return None;
+    }
+    let venv = state.config.engines_dir.join("breeze-tts-2").join(".venv");
+    let venv_python = if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    };
+    let program = if venv_python.exists() {
+        venv_python.display().to_string()
+    } else if cfg!(windows) {
+        "python".to_string()
+    } else {
+        "python3".to_string()
+    };
+    let breeze_url =
+        std::env::var("CHASM_BREEZE_URL").unwrap_or_else(|_| "http://127.0.0.1:7860".to_string());
+    let voices_dir = crate::active_voices_dir(&state.config);
+    Some(RuntimeSpec {
+        program,
+        args: vec![
+            script.display().to_string(),
+            "--voices-dir".to_string(),
+            voices_dir.display().to_string(),
+            "--breeze-url".to_string(),
+            breeze_url,
+            "--chasm-url".to_string(),
+            format!("http://{}", state.config.bind_addr),
             "--host".to_string(),
             "127.0.0.1".to_string(),
             "--port".to_string(),
@@ -575,8 +626,8 @@ fn write_active_tts_engine(state: &Arc<AppState>, engine: &str) {
     }
 }
 
-/// Kills every running TTS engine server — faster-qwen3-tts (`qwen3_tts_server.py`)
-/// and PocketTTS (`pockettts_server.py`) — by command-line match, so switching
+/// Kills every running TTS engine server — faster-qwen3-tts (`qwen3_tts_server.py`),
+/// PocketTTS (`pockettts_server.py`) and the Breeze adapter — by command-line match, so switching
 /// engines fully unloads the previous model from VRAM. Belt-and-suspenders beyond
 /// the port-based kill, which only frees `:5002` and can miss an orphaned/duplicate
 /// process not bound to the port. Best-effort; a no-op when nothing matches.
@@ -590,7 +641,7 @@ fn kill_tts_servers() {
             "-NoProfile",
             "-Command",
             "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | \
-             Where-Object { $_.CommandLine -like '*qwen3_tts_server.py*' -or $_.CommandLine -like '*pockettts_server.py*' } | \
+             Where-Object { $_.CommandLine -like '*qwen3_tts_server.py*' -or $_.CommandLine -like '*pockettts_server.py*' -or $_.CommandLine -like '*breeze_tts_server.py*' } | \
              ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
         ])
         .creation_flags(CREATE_NO_WINDOW)

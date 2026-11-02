@@ -64,6 +64,19 @@ pub struct AppSettings {
     /// default so older settings files load fine.
     #[serde(default)]
     pub self_improvement: SelfImprovementSettings,
+    /// The fast "nervous system" decision layer that runs before the LLM brain
+    /// (instant reflex actions, refusals, escalation). Serde default so older
+    /// settings files load fine.
+    #[serde(default)]
+    pub nervous_system: NervousSystemSettings,
+    /// NPC senses: what a character can see (bridge-reported landmarks, optional
+    /// screenshot description) and hear (overheard in-game dialogue / radio).
+    #[serde(default)]
+    pub senses: SensesSettings,
+    /// Spoken delivery: per-line voice direction cues for TTS (whisper, shout,
+    /// accent, vocal events) and the radio channel for far-away squadmates.
+    #[serde(default)]
+    pub voice_direction: VoiceDirectionSettings,
 }
 
 impl Default for AppSettings {
@@ -84,6 +97,9 @@ impl Default for AppSettings {
             hotkeys: HotkeysSettings::default(),
             movement: MovementSettings::default(),
             self_improvement: SelfImprovementSettings::default(),
+            nervous_system: NervousSystemSettings::default(),
+            senses: SensesSettings::default(),
+            voice_direction: VoiceDirectionSettings::default(),
         }
     }
 }
@@ -1026,6 +1042,139 @@ impl Default for AudioTagsSettings {
     }
 }
 
+/// Nervous-system provider: a keyword/grammar matcher that needs no model.
+pub const NERVOUS_PROVIDER_RULES: &str = "rules";
+/// Nervous-system provider: a Kev decision model behind a System One endpoint
+/// (`POST {kev_url}/v1/systemone`), falling back to the rules matcher on error.
+pub const NERVOUS_PROVIDER_KEV: &str = "kev";
+
+/// Normalizes a nervous-system provider id; anything unknown is `rules`.
+pub fn normalize_nervous_provider(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        NERVOUS_PROVIDER_KEV => NERVOUS_PROVIDER_KEV,
+        _ => NERVOUS_PROVIDER_RULES,
+    }
+}
+
+/// The "nervous system": a fast, non-generative decision pass that sees every
+/// stimulus (the player's words, a heard line, a game event) BEFORE the LLM.
+/// It can fire a reflex action instantly ("jump", "get down"), let the
+/// character refuse, or hand the turn to the brain (the full LLM turn) when it
+/// needs thought or speech. `#[serde(default)]` so older settings files load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NervousSystemSettings {
+    /// Master switch. Off = every turn goes straight to the brain, as before.
+    pub enabled: bool,
+    /// `rules` (built-in matcher, no model) or `kev` (Kev decision model).
+    pub provider: String,
+    /// Base URL of the Kev System One server (`python -m kev.serve`).
+    pub kev_url: String,
+    /// Model name sent in the System One request.
+    pub kev_model: String,
+    /// Optional bearer key (`KEV_API_KEY` on the server). Secret; never logged.
+    pub kev_api_key: String,
+    /// Minimum probability on a reflex before it fires without the brain.
+    pub reflex_threshold: f32,
+    /// Below this probability of complying, the character refuses the command
+    /// (the brain is told it decided not to, and voices that).
+    pub refuse_threshold: f32,
+    /// Hard timeout for one Kev call; on timeout the rules matcher decides.
+    pub timeout_ms: u64,
+}
+
+impl Default for NervousSystemSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: NERVOUS_PROVIDER_RULES.to_string(),
+            kev_url: "http://127.0.0.1:8008".to_string(),
+            kev_model: "kev-latest".to_string(),
+            kev_api_key: String::new(),
+            reflex_threshold: 0.55,
+            refuse_threshold: 0.2,
+            timeout_ms: 1500,
+        }
+    }
+}
+
+/// What NPCs can see and hear. Landmarks and overheard lines are supplied by
+/// the game bridge; chasm keeps them per turn / in a short rolling window and
+/// injects them as depth-1 context. `#[serde(default)]` so older files load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SensesSettings {
+    /// Inject bridge-reported visible landmarks ("what you can see") and let
+    /// spoken references ("stand by that rock") resolve to one of them.
+    pub vision_enabled: bool,
+    /// Describe a bridge-supplied screenshot with a vision-capable model and add
+    /// the description to the NPC's view. Off by default (one extra model call).
+    pub screenshot_enabled: bool,
+    /// OpenAI-compatible base URL of the vision model (`…/v1`). Empty = the
+    /// managed local LLM endpoint (e.g. Gemma 4 with its mmproj loaded).
+    pub vision_base_url: String,
+    /// Model name for the vision request (empty = server default).
+    pub vision_model: String,
+    /// Optional bearer key for the vision endpoint. Secret; never logged.
+    pub vision_api_key: String,
+    /// Remember overheard in-game dialogue (other NPCs, radio chatter).
+    pub hearing_enabled: bool,
+    /// How long an overheard line stays in an NPC's short-term memory.
+    pub hearing_window_secs: u64,
+    /// Max overheard lines injected into one turn (newest win).
+    pub hearing_max_lines: usize,
+}
+
+impl Default for SensesSettings {
+    fn default() -> Self {
+        Self {
+            vision_enabled: true,
+            screenshot_enabled: false,
+            vision_base_url: String::new(),
+            vision_model: String::new(),
+            vision_api_key: String::new(),
+            hearing_enabled: true,
+            hearing_window_secs: 180,
+            hearing_max_lines: 8,
+        }
+    }
+}
+
+/// Spoken delivery. With voice direction on, the brain may open a line with a
+/// bracketed cue (`[whispering]`, `[thick German accent]`) and use inline vocal
+/// events (`(laugh)`); chasm strips them from captions and forwards them to the
+/// TTS engine as `instructions` (Breeze TTS 2 voice direction). The radio
+/// channel band-limits a squadmate's voice when they are far away and the
+/// bridge marks them radio-capable. `#[serde(default)]` so older files load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceDirectionSettings {
+    /// Prompt the brain for delivery cues and pass them to TTS. A profile can
+    /// also turn this on (`features.voiceDirection` in `profile.json`).
+    pub enabled: bool,
+    /// Keep inline vocal events (`(laugh)`, `(sigh)`) in the TTS text. Turn off
+    /// for engines that would read them aloud literally.
+    pub vocal_events: bool,
+    /// Allow radio delivery for radio-capable NPCs beyond `radio_distance_m`.
+    pub radio_enabled: bool,
+    /// Distance (meters) beyond which a radio-capable NPC talks over the radio.
+    pub radio_distance_m: f32,
+    /// Static noise level mixed into radio audio (0 = clean, 0.2 = heavy).
+    pub radio_static: f32,
+}
+
+impl Default for VoiceDirectionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            vocal_events: true,
+            radio_enabled: true,
+            radio_distance_m: 25.0,
+            radio_static: 0.04,
+        }
+    }
+}
+
 impl AppSettings {
     /// Loads settings from `path`, falling back to defaults if missing/invalid.
     /// A successfully-parsed value is run through [`Self::migrate`] so pre-rework
@@ -1734,6 +1883,10 @@ pub fn retrieval_model_status_label(status: &str) -> String {
 pub const TTS_LOCAL_ENGINES: &[(&str, &str)] = &[
     ("faster-qwen3-tts", "faster-qwen3-tts (streaming)"),
     ("pockettts", "PocketTTS (streaming)"),
+    // Adapter (`breeze_tts_server.py`, stdlib Python) in front of Breeze's own
+    // streaming API, which runs on Linux/WSL2 + CUDA (`CHASM_BREEZE_URL`).
+    // Voice direction + inline vocal events; see `voice_direction` settings.
+    ("breeze-tts-2", "Breeze TTS 2 (voice direction)"),
 ];
 
 /// Normalizes a saved/posted local TTS engine to a known engine value. Returns the

@@ -1,0 +1,28 @@
+{
+  "id": "halo-ce",
+  "name": "Halo: Combat Evolved",
+  "description": "Game profile for Halo: Combat Evolved (OpenCE decompilation). Kevin is an AI squadmate with a nervous system (instant reflexes), eyes (bridge-reported landmarks), ears (overheard dialogue and radio), and a directed voice.",
+  "bundleVersion": 1,
+  "comment": "Reflex ids match the action book's actionIds, so a bridge executes one vocabulary whether the nervous system or the brain chose the action. See docs/halo-ce-bridge.md for the bridge contract.",
+  "features": {
+    "voiceDirection": true
+  },
+  "characters": [
+    { "name": "Kevin" }
+  ],
+  "reflexes": [
+    { "id": "body.jump", "description": "Jump in place", "phrases": ["jump", "hop"] },
+    { "id": "body.crouch", "description": "Crouch down low", "phrases": ["crouch", "get down", "duck", "get low", "stay low", "keep low"] },
+    { "id": "body.stand", "description": "Stand back up from crouching", "phrases": ["stand up", "get up", "on your feet", "stand"] },
+    { "id": "squad.follow", "description": "Follow the player", "phrases": ["follow me", "on me", "with me", "come with me", "come on", "let's go", "lets go", "move out"] },
+    { "id": "squad.wait", "description": "Stop and hold position right here", "phrases": ["wait here", "stay here", "hold position", "hold here", "hold up", "wait", "stay"] },
+    { "id": "squad.move_to", "description": "Walk over to a specific visible thing or spot", "needs_target": true, "phrases": ["go stand by", "go stand near", "go stand next to", "stand by", "stand near", "stand next to", "go to", "move to", "go over to", "get over to", "head to", "head over to", "walk to", "run to", "go near", "get to", "go by"] },
+    { "id": "combat.hold_fire", "description": "Stop shooting and hold fire", "phrases": ["hold fire", "hold your fire", "cease fire", "stop shooting", "don't shoot", "do not shoot", "weapons tight"] },
+    { "id": "combat.fire_at_will", "description": "Open fire on the enemy right now", "phrases": ["open fire", "fire at will", "weapons free", "shoot", "fire", "take them out", "light them up", "engage"] },
+    { "id": "combat.take_cover", "description": "Get into the nearest cover", "phrases": ["take cover", "get to cover", "find cover", "get in cover"] },
+    { "id": "combat.throw_grenade", "description": "Throw a grenade at the enemy", "phrases": ["throw a grenade", "throw a nade", "nade them", "frag them", "frag out", "grenade"] },
+    { "id": "combat.reload", "description": "Reload the weapon", "phrases": ["reload"] },
+    { "id": "vehicle.enter", "description": "Get into the nearest vehicle", "phrases": ["get in the car", "get in the warthog", "get in the hog", "get in the vehicle", "get in", "hop in", "mount up"] },
+    { "id": "vehicle.exit", "description": "Get out of the vehicle", "phrases": ["get out of the car", "get out of the warthog", "get out", "hop out", "dismount"] }
+  ]
+}

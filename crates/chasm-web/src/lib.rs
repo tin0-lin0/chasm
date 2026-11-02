@@ -52,11 +52,14 @@ mod launcher;
 mod llm;
 mod llm_api;
 mod movement;
+mod nervous;
+mod radio;
 mod music;
 mod orchestrator;
 mod persona;
 mod save_sync;
 mod scheduler;
+mod senses;
 mod skill_creator;
 mod skill_executor;
 mod stack_lifecycle;
@@ -583,7 +586,24 @@ pub fn router(config: AppConfig) -> Router {
         // the game_master action as NDJSON. The file bridge stays the default; this
         // is purely additive. The C++ plugin becomes its HTTP client in a later
         // stage (different repo). See [`game_bridge`].
-        .route("/api/game/v1/turn", post(game_bridge::turn))
+        // Turns may carry a push-to-talk WAV and a screenshot of the NPC's view
+        // (`metadata.vision.screenshot_base64`), so allow more than axum's 2 MB.
+        .route(
+            "/api/game/v1/turn",
+            post(game_bridge::turn).layer(axum::extract::DefaultBodyLimit::max(GAME_BODY_LIMIT)),
+        )
+        // The nervous system on its own: one stimulus in, one decision out (a
+        // reflex to fire now, or "needs the brain"). No LLM. See [`nervous`].
+        .route("/api/game/v1/stimulus", post(nervous::stimulus))
+        // Hearing: overheard in-game dialogue / radio chatter for NPCs' short-term
+        // context, optionally with a nervous-system reaction. See [`senses`].
+        .route("/api/game/v1/hear", post(senses::hear))
+        // Sight: resolve "that rock over there" to a bridge-reported landmark,
+        // and/or describe a screenshot of the NPC's view. See [`senses`].
+        .route(
+            "/api/game/v1/look",
+            post(senses::look).layer(axum::extract::DefaultBodyLimit::max(GAME_BODY_LIMIT)),
+        )
         // Player-persona capture upload (stats snapshot + optional stealth
         // screenshot). Stored profile-aware; generation runs on a background
         // task and NEVER blocks a turn. See [`persona`]. The route-scoped body
@@ -800,6 +820,9 @@ fn tuning_json(tuning: &TtsTuningSettings) -> serde_json::Value {
     })
 }
 
+/// Body limit for game routes that may carry audio or a screenshot (16 MB).
+const GAME_BODY_LIMIT: usize = 16 * 1024 * 1024;
+
 /// faster-qwen3-tts model output: 24 kHz mono int16. The FNV plugin's WAV loader
 /// handles 24 kHz (it played the earlier 24 kHz clips), so we keep the native
 /// rate and let DirectSound resample on playback.
@@ -990,8 +1013,9 @@ async fn speech_synthesize(
     State(state): State<Arc<AppState>>,
     Json(req): Json<serde_json::Value>,
 ) -> WebResult<Json<serde_json::Value>> {
-    let (text, character) = speech_request(&req);
+    let (raw_text, character) = speech_request(&req);
     let settings = AppSettings::load(&state.config.settings_path);
+    let (text, _caption, _instructions) = directed_speech(&settings, &req, &raw_text);
     let provider = chasm_core::normalize_tts_provider(&settings.tts.provider);
     let bytes = if provider == chasm_core::PROVIDER_LOCAL {
         let tuning = resolve_tuning(&settings.tts.tuning, &req);
@@ -1004,6 +1028,34 @@ async fn speech_synthesize(
         "audio": { "data": STANDARD.encode(&bytes) },
         "mimeType": "audio/wav",
     })))
+}
+
+/// Local TTS engine id for Breeze TTS 2 (voice direction + vocal events).
+pub(crate) const BREEZE_TTS_ENGINE: &str = "breeze-tts-2";
+
+/// Splits a synthesis request's text for voice direction: `(speech, caption,
+/// instructions)`. The leading `[cue]` (or an explicit `instructions` field)
+/// becomes the engine's voice-direction instructions; inline vocal events
+/// (`(laugh)`) stay in the spoken text only for an engine that performs them
+/// (Breeze TTS 2) and are always dropped from the caption.
+fn directed_speech(
+    settings: &AppSettings,
+    req: &serde_json::Value,
+    text: &str,
+) -> (String, String, String) {
+    let local = chasm_core::normalize_tts_provider(&settings.tts.provider) == chasm_core::PROVIDER_LOCAL;
+    let keep_events = local
+        && settings.voice_direction.vocal_events
+        && settings.tts.local_engine.trim() == BREEZE_TTS_ENGINE;
+    let spoken = chasm_fnv_bridge::delivery::split(text, keep_events);
+    let explicit = req
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let instructions = explicit.or(spoken.cue).unwrap_or_default();
+    (spoken.speech, spoken.caption, instructions)
 }
 
 /// The caption text to attach to a streamed audio chunk. Only the FIRST chunk of a
@@ -1074,8 +1126,11 @@ pub(crate) fn speech_synthesize_stream_core(
     req: serde_json::Value,
 ) -> impl futures_util::Stream<Item = String> + Send {
     use futures_util::StreamExt;
-    let (text, character) = speech_request(&req);
+    let (raw_text, character) = speech_request(&req);
     let settings = AppSettings::load(&state.config.settings_path);
+    // Voice direction: split "[whispering] Quiet. (sigh)" into the engine's
+    // `instructions`, the text it speaks, and the caption the player reads.
+    let (text, caption_text, instructions) = directed_speech(&settings, &req, &raw_text);
     // Ramp the streamed slice size: a small FIRST slice for fast first-audio, then
     // DOUBLE up to stream_slice_ms (the cap). Few big chunk files (vs many tiny ones)
     // keep the in-game plugin's per-frame file I/O cheap — it reads one WAV per chunk
@@ -1120,7 +1175,7 @@ pub(crate) fn speech_synthesize_stream_core(
         // (No native streaming; the bridge still plays it gaplessly.)
         if tts_provider != chasm_core::PROVIDER_LOCAL {
             match synthesize_via_api(&api_config, &api_settings, &tts_provider, &text, &api_character).await {
-                Ok(wav) => yield audio_chunk_line(0, &wav, &text, caption_max_chars),
+                Ok(wav) => yield audio_chunk_line(0, &wav, &caption_text, caption_max_chars),
                 Err(error) => yield speech_error_line(&format!("{error}")),
             }
             return;
@@ -1132,6 +1187,8 @@ pub(crate) fn speech_synthesize_stream_core(
             "input": text,
             "voice": character,
             "response_format": "pcm",
+            // Voice direction (Breeze TTS 2 reads it; other engines ignore it).
+            "instructions": instructions,
             "lead_in_ms": lead_in_ms,
             "sentence_gap_ms": sentence_gap_ms,
             "trailing_ms": trailing_ms,
@@ -1178,7 +1235,7 @@ pub(crate) fn speech_synthesize_stream_core(
                 let mut slice: Vec<u8> = buf.drain(..target).collect();
                 apply_pcm_gain(&mut slice, volume);
                 let wav = pcm16_to_wav(&slice, TTS_SAMPLE_RATE, 1, 16);
-                yield audio_chunk_line(index, &wav, caption_for_chunk(index, &text), caption_max_chars);
+                yield audio_chunk_line(index, &wav, caption_for_chunk(index, &caption_text), caption_max_chars);
                 index += 1;
                 cur_slice_ms = (cur_slice_ms * 2).min(max_slice_ms);
             }
@@ -1187,7 +1244,7 @@ pub(crate) fn speech_synthesize_stream_core(
         if !buf.is_empty() {
             apply_pcm_gain(&mut buf, volume);
             let wav = pcm16_to_wav(&buf, TTS_SAMPLE_RATE, 1, 16);
-            yield audio_chunk_line(index, &wav, if index == 0 { &text } else { "" }, caption_max_chars);
+            yield audio_chunk_line(index, &wav, if index == 0 { &caption_text } else { "" }, caption_max_chars);
         }
     };
 
@@ -2100,7 +2157,12 @@ pub(crate) fn engine_statuses(
                 &dir.join(".failed"),
                 &[dir.join("install.log")],
             );
-            let status = if dir.join(".installing").exists() {
+            // Breeze TTS 2 runs as an external server (Linux/WSL2 + CUDA); chasm
+            // only runs the stdlib adapter, so it is always "installed" here and
+            // the adapter's /health reports whether Breeze itself is reachable.
+            let status = if *id == BREEZE_TTS_ENGINE {
+                "installed"
+            } else if dir.join(".installing").exists() {
                 "installing"
             } else if dir.join(".failed").exists() {
                 "failed"

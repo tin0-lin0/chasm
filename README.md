@@ -38,7 +38,8 @@ Everything runs locally out of the box. Each capability picks a **provider** —
 | Capability | Local (managed, default) | Hosted APIs | Notes |
 | --- | --- | --- | --- |
 | **LLM** | llama.cpp `llama-server` (OpenAI-compatible, `:5001`) | OpenAI, Anthropic, Google Gemini, OpenRouter, any OpenAI-compatible base URL | Pick which placed GGUF is active in Settings → LLM (guided download + drag-drop to add more), or set an API key. |
-| **TTS** | faster-qwen3-tts (streaming, `:5002`) | ElevenLabs, Cartesia, Inworld | Voice-cloned per character — locally, or through a hosted provider's cloning API. |
+| **TTS** | faster-qwen3-tts / PocketTTS / Breeze TTS 2 (streaming, `:5002`) | ElevenLabs, Cartesia, Inworld | Voice-cloned per character — locally, or through a hosted provider's cloning API. Breeze adds voice direction + vocal events. |
+| **Nervous system** | Kev decision model (System One API, `:8008`) or built-in rules | — | Instant reflexes / refusals before the LLM. Rules need no model. |
 | **STT** | Parakeet TDT 0.6B v3 (dedicated GPU server, `:5003`) | OpenAI, Groq, Deepgram, AssemblyAI, OpenRouter | Local microphone transcription with no LLM contention, or a hosted key. Optional word-boosting from your character + lore names. |
 | **Music** | ACE-Step (dedicated service, `:5004`) | — | Generates original songs on demand so an NPC can actually perform music in-world. |
 | **Retrieval** | ONNX embeddings + reranker | — | Two-stage lore/memory/action retrieval, CPU-friendly. Place the embedder ONNX from Settings → Retrieval. |
@@ -84,6 +85,15 @@ Speed is a first-class goal, not an afterthought:
 - **NPC witness memory.** Each event records *who was in range to see it*; those NPCs get a durable, personal memory of what they witnessed — and it **rolls back with your saves**.
 - **Event-triggered reactions.** Checked event types make witnessing NPCs react unprompted, rate-limited so they don't spam.
 - **Reliable weapon-fire detection.** A dedicated engine hook emits an immediate, per-shot signal that both reactions and skills can trigger on.
+
+### Nervous system, senses & voice (squadmates)
+- **A nervous system before the brain.** Every player line first goes through a fast decision layer: a [Kev](https://github.com/jaredpalmer/kev) decision model (e.g. Kev-4B) or a built-in rules matcher. "Kevin, jump" fires the `jump` reflex in milliseconds with no LLM call. "Can you jump?" goes to the brain. A command the character would rather not follow is **refused**, and the brain voices the refusal in character.
+- **Eyes.** The bridge reports visible landmarks with coordinates (optionally a screenshot for a vision model such as Gemma 4). "Go stand near those bodies" resolves to a real target, and the NPC can talk about what it sees.
+- **Ears.** Overheard in-game dialogue and radio chatter (other NPCs, an AI in your ear) feed the NPC's short-term context, and can trigger reactions.
+- **Mission awareness.** The game's current objective rides along with every turn.
+- **Directed voice.** The brain cues its delivery (`[whispering]`, `[thick German accent]`, `(laugh)`). Cues reach the TTS engine as voice-direction instructions (Breeze TTS 2) and never show up in captions.
+- **Radio.** A radio-capable squadmate who is far away talks over band-limited, static-laced comms instead of going silent.
+- **Halo CE profile + simulator.** `profiles/halo-ce/` ("Kevin", a Spartan who insists he isn't an AI) and `scripts/halo_sim.py`, a fake Halo bridge that runs the whole loop without the game. See [docs/halo-ce-bridge.md](docs/halo-ce-bridge.md).
 
 ### Save-aware by construction
 Chat history, events, schedules, movement, relationships, journals, and skills all **checkpoint on save and restore on load**, keyed to the exact save. Quick-load rewinds NPC memory to match — a habit or a witnessed event from a discarded branch simply vanishes.

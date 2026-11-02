@@ -766,9 +766,16 @@ to characters by name when no explicit map is given).
 
 ## 10. Endpoint quick reference
 
+> Squadmate features (an instant-reflex nervous system, sight via landmarks,
+> hearing, voice direction and radio) extend the turn contract additively. See
+> **[halo-ce-bridge.md](halo-ce-bridge.md)**.
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/game/v1/turn` | **One-call NPC turn** → NDJSON (speech.delta, audio.chunk, action, reply, turn.completed) |
+| POST | `/api/game/v1/turn` | **One-call NPC turn** → NDJSON (nervous, reflex, speech.delta, audio.chunk, action, reply, turn.completed) |
+| POST | `/api/game/v1/stimulus` | Nervous system only: instant reflex / brain / ignore decision, no LLM ([halo-ce-bridge.md](halo-ce-bridge.md)) |
+| POST | `/api/game/v1/hear` | Overheard dialogue / radio chatter for NPCs' short-term context |
+| POST | `/api/game/v1/look` | Resolve "that rock over there" to a visible landmark; describe a screenshot |
 | POST | `/api/headless/v1/live-chats` | Create a scene (live-chat) |
 | GET  | `/api/headless/v1/live-chats/:id` | Fetch a scene |
 | POST | `/api/headless/v1/live-chats/:id/presence` | Update presence/audibility/distance |

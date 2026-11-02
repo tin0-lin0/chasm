@@ -1,0 +1,400 @@
+{
+  "name": "Halo CE Action Book",
+  "description": "What Kevin can physically do in Halo CE. Ids match the profile's reflex ids.",
+  "entries": {
+    "0": {
+      "uid": 0,
+      "key": [
+        "jump"
+      ],
+      "comment": "Jump",
+      "content": "Jump in place.",
+      "actionId": "body.jump",
+      "alias": "jump",
+      "verbs": [
+        "jump",
+        "hop"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "body.jump"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "1": {
+      "uid": 1,
+      "key": [
+        "crouch",
+        "get down",
+        "duck"
+      ],
+      "comment": "Crouch",
+      "content": "Crouch down low (quieter, harder to hit).",
+      "actionId": "body.crouch",
+      "alias": "crouch",
+      "verbs": [
+        "crouch",
+        "get down",
+        "duck"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "body.crouch"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "2": {
+      "uid": 2,
+      "key": [
+        "stand up",
+        "get up"
+      ],
+      "comment": "Stand up",
+      "content": "Stand back up from a crouch.",
+      "actionId": "body.stand",
+      "alias": "stand",
+      "verbs": [
+        "stand up",
+        "get up"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "body.stand"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "3": {
+      "uid": 3,
+      "key": [
+        "follow",
+        "on me",
+        "with me"
+      ],
+      "comment": "Follow",
+      "content": "Follow {{user}} and stay close.",
+      "actionId": "squad.follow",
+      "alias": "follow",
+      "verbs": [
+        "follow",
+        "come along"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "squad.follow"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "4": {
+      "uid": 4,
+      "key": [
+        "wait",
+        "stay",
+        "hold position"
+      ],
+      "comment": "Hold position",
+      "content": "Stop and hold position where you are until told to move.",
+      "actionId": "squad.wait",
+      "alias": "wait",
+      "verbs": [
+        "wait",
+        "stay",
+        "hold position"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "squad.wait"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "5": {
+      "uid": 5,
+      "key": [
+        "go to",
+        "move to",
+        "stand by",
+        "over there"
+      ],
+      "comment": "Move to",
+      "content": "Walk to something you can see. Target = the name of a visible landmark, exactly as listed in what you can see.",
+      "actionId": "squad.move_to",
+      "alias": "move_to",
+      "verbs": [
+        "go to",
+        "move to",
+        "stand by",
+        "walk to"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "squad.move_to"
+      },
+      "requiresTarget": true,
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "name of a visible landmark"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "6": {
+      "uid": 6,
+      "key": [
+        "attack",
+        "kill",
+        "shoot him",
+        "take him out"
+      ],
+      "comment": "Attack",
+      "content": "Attack a specific target: an enemy, another character, or even {{user}} if they betray you.",
+      "actionId": "combat.attack",
+      "alias": "attack",
+      "verbs": [
+        "attack",
+        "kill",
+        "shoot",
+        "take out"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "combat.attack"
+      },
+      "requiresTarget": true,
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "who to attack"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "7": {
+      "uid": 7,
+      "key": [
+        "hold fire",
+        "don't shoot",
+        "cease fire"
+      ],
+      "comment": "Hold fire",
+      "content": "Stop shooting and hold fire until told otherwise.",
+      "actionId": "combat.hold_fire",
+      "alias": "hold_fire",
+      "verbs": [
+        "hold fire",
+        "cease fire"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "combat.hold_fire"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "8": {
+      "uid": 8,
+      "key": [
+        "open fire",
+        "fire at will",
+        "weapons free"
+      ],
+      "comment": "Fire at will",
+      "content": "Open fire on any enemy in sight.",
+      "actionId": "combat.fire_at_will",
+      "alias": "fire_at_will",
+      "verbs": [
+        "open fire",
+        "fire at will"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "combat.fire_at_will"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "9": {
+      "uid": 9,
+      "key": [
+        "take cover",
+        "cover"
+      ],
+      "comment": "Take cover",
+      "content": "Get into the nearest cover.",
+      "actionId": "combat.take_cover",
+      "alias": "take_cover",
+      "verbs": [
+        "take cover"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "combat.take_cover"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "10": {
+      "uid": 10,
+      "key": [
+        "grenade",
+        "nade",
+        "frag"
+      ],
+      "comment": "Throw grenade",
+      "content": "Throw a grenade at the enemy.",
+      "actionId": "combat.throw_grenade",
+      "alias": "grenade",
+      "verbs": [
+        "throw a grenade",
+        "frag"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "combat.throw_grenade"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "11": {
+      "uid": 11,
+      "key": [
+        "get in",
+        "warthog",
+        "car",
+        "seat"
+      ],
+      "comment": "Get in vehicle",
+      "content": "Get into the nearest vehicle. Optional target = seat (driver, passenger, gunner).",
+      "actionId": "vehicle.enter",
+      "alias": "get_in",
+      "verbs": [
+        "get in",
+        "mount up"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "vehicle.enter"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "12": {
+      "uid": 12,
+      "key": [
+        "get out",
+        "dismount"
+      ],
+      "comment": "Get out of vehicle",
+      "content": "Get out of the vehicle you are in.",
+      "actionId": "vehicle.exit",
+      "alias": "get_out",
+      "verbs": [
+        "get out",
+        "dismount"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "vehicle.exit"
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    },
+    "13": {
+      "uid": 13,
+      "key": [
+        "wave",
+        "salute",
+        "point",
+        "nod"
+      ],
+      "comment": "Gesture",
+      "content": "Do a quick gesture: wave, salute, point, nod or shake head. Target = the gesture.",
+      "actionId": "body.gesture",
+      "alias": "gesture",
+      "verbs": [
+        "wave",
+        "salute",
+        "point"
+      ],
+      "group": "",
+      "targetGame": "halo-ce",
+      "riskTier": "low",
+      "execution": {
+        "script": "body.gesture"
+      },
+      "requiresTarget": true,
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "which gesture"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      },
+      "binding": {
+        "engine": "halo-ce:http-bridge"
+      }
+    }
+  }
+}

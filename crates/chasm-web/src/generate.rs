@@ -1676,6 +1676,54 @@ fn prepare_speaker_turn_traced(
         });
     }
 
+    // Senses + nervous system + voice (HTTP game transport): what this NPC can
+    // see and recently overheard, what its nervous system already did (or
+    // refused), whether it is talking over the radio — all depth-1 (VOLATILE)
+    // — plus the static voice-direction instruction in the cached head. Every
+    // block is absent when the bridge sent nothing, so other games' prompts are
+    // byte-identical.
+    {
+        let settings = chasm_core::AppSettings::load(&state.config.settings_path);
+        assembled.components.extend(crate::senses::prompt_components(
+            &settings.senses,
+            &speaker_name,
+            &ctx.player_metadata,
+        ));
+        if let Some(note) = ctx
+            .player_metadata
+            .pointer("/nervous/note")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            assembled.components.push(crate::senses::component(
+                "nervous_impulse",
+                "Instinct",
+                "Depth-1: what the nervous system already did (or refused) this turn.",
+                note.to_string(),
+            ));
+        }
+        if ctx.player_metadata.get("radio").and_then(Value::as_bool) == Some(true) {
+            assembled.components.push(crate::senses::component(
+                "radio_channel",
+                "Radio",
+                "Depth-1: the NPC is far away and talking over the radio.",
+                RADIO_CHANNEL_NOTE.to_string(),
+            ));
+        }
+        if crate::senses::voice_direction_active(state, &settings) {
+            assembled.components.push(crate::senses::component(
+                "voice_direction",
+                "Voice direction",
+                "Lets the NPC cue its delivery ([whispering]) and vocal events ((laugh)) for TTS.",
+                VOICE_DIRECTION_INSTRUCTION.to_string(),
+            ));
+        }
+        for (order, component) in assembled.components.iter_mut().enumerate() {
+            component.order = order;
+        }
+    }
+
     let scene_roster = build_scene_roster(state, ctx, &speaker_participant_id, &speaker_name);
     let query_instruction =
         chasm_prompt::npc_actions_instruction(&action_book_entries(state), &ctx.requested_scopes);
@@ -1905,6 +1953,19 @@ const PLAYER_PERSONA_DEPTH1_PREFIX: &str =
      manner, and bearing exactly as your character honestly would — let your genuine \
      impression of them shape your tone and what you say.";
 
+/// Voice-direction rules (in the cached head while voice direction is on).
+const VOICE_DIRECTION_INSTRUCTION: &str = "Voice direction: your lines are performed aloud by an \
+     expressive voice actor. When HOW you say a line matters, start it with ONE short delivery cue \
+     in square brackets, e.g. [whispering], [shouting over gunfire], [thick German accent], \
+     [sarcastic], [out of breath]. You may also place a few non-verbal sounds inline in \
+     parentheses: (laugh), (sigh), (scoff), (groan), (cough). If you were asked to talk a certain \
+     way (keep it down, use an accent), keep that delivery until told otherwise. Cues describe only \
+     the voice, never actions, and are never read out.";
+
+/// Depth-1 note while the NPC talks over the radio.
+const RADIO_CHANNEL_NOTE: &str = "[You are far away and talking over the squad radio, not face \
+     to face. Keep it short and clipped, like real radio chatter.]";
+
 fn build_chat_messages(
     assembled: &chasm_core::PromptAssemblyView,
     history: &[MessageView],
@@ -1930,12 +1991,18 @@ fn build_chat_messages(
     // (measured: first-token time grows 1.2s -> 2.2s over a few turns). They
     // are injected at depth 1 instead, like the scenario below, where only the
     // prompt tail reprocesses.
-    const VOLATILE_KEYS: [&str; 5] = [
+    const VOLATILE_KEYS: [&str; 10] = [
         "lore",
         "chat_vectors",
         "quest_books",
         "action_books",
         "world_state",
+        // Senses / nervous system / radio: per-turn by nature.
+        "vision",
+        "overheard",
+        "nervous_impulse",
+        "radio_channel",
+        "mission",
     ];
     let included = |component: &&chasm_core::PromptComponentView| {
         component.group == "system"

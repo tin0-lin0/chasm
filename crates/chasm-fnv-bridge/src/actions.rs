@@ -22,6 +22,11 @@ use crate::npc::slug_lookup_key;
 use crate::protocol::{now_epoch_millis, safe_file_id, sanitize_bridge_line, NativeRequest};
 
 const TRUSTED_FNV_ACTION_ENGINE: &str = "fallout-new-vegas:xnvse";
+/// Binding-engine suffix for games driven over the HTTP game transport
+/// (`"<game>:http-bridge"`, e.g. `halo-ce:http-bridge`). Such a bridge executes
+/// the action itself by id (`execution.script`), so the profile-authored entry
+/// is trusted the same way an xNVSE script is — no FNV command file is built.
+const HTTP_BRIDGE_ENGINE_SUFFIX: &str = ":http-bridge";
 const NATIVE_ACTION_COMMAND_VERSION: &str = "NVBRIDGE_ACTION_V2";
 
 /// The resolved native action attached to a generated line / turn.
@@ -198,7 +203,9 @@ fn get_trusted_activated_execution(
         .unwrap_or_else(|| json!({}));
     let engine = binding.get("engine").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
     let script = execution.get("script").and_then(Value::as_str).unwrap_or("").trim();
-    if engine != TRUSTED_FNV_ACTION_ENGINE || script.is_empty() {
+    let trusted_engine =
+        engine == TRUSTED_FNV_ACTION_ENGINE || engine.ends_with(HTTP_BRIDGE_ENGINE_SUFFIX);
+    if !trusted_engine || script.is_empty() {
         return (activated_action, json!({}), json!({}));
     }
     (activated_action, binding, execution)
@@ -1711,6 +1718,33 @@ mod tests {
         let gms = get_native_game_master_actions_per_step(&cfg(), &one);
         assert_eq!(gms.len(), 1);
         assert_eq!(gms[0].action, "ACTION_BOOK");
+    }
+
+    /// An HTTP-bridge game (`<game>:http-bridge`) gets its profile-authored
+    /// actions triggered as ACTION_BOOK, with the target kept; an untrusted
+    /// engine still never triggers.
+    #[test]
+    fn http_bridge_engine_actions_trigger() {
+        let turn = |engine: &str| {
+            json!({
+                "message": { "content": "Moving." },
+                "structured": { "actions": [
+                    { "action": "move_to", "target": "crashed lifeboat", "id": "squad.move_to" }
+                ]},
+                "metadata": { "activatedActions": [
+                    { "actionId": "squad.move_to", "bookId": "Halo CE Action Book",
+                      "binding": { "engine": engine },
+                      "execution": { "script": "squad.move_to" } }
+                ]}
+            })
+        };
+        let gm = get_native_game_master_action(&cfg(), &turn("halo-ce:http-bridge"));
+        assert_eq!(gm.action, "ACTION_BOOK");
+        assert!(gm.should_trigger);
+        assert_eq!(gm.action_id, "squad.move_to");
+        assert_eq!(gm.target, "crashed lifeboat");
+        let untrusted = get_native_game_master_action(&cfg(), &turn("someone-else:custom"));
+        assert!(!untrusted.should_trigger);
     }
 
     /// EXACT repro of the 2026-07-06 live no-op: companion told "kill easy pete",

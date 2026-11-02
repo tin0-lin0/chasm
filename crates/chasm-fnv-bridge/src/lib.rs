@@ -10,6 +10,7 @@ pub mod actions;
 pub mod admin;
 pub mod chasm;
 pub mod config;
+pub mod delivery;
 pub mod events;
 pub mod npc;
 pub mod protocol;
@@ -583,6 +584,9 @@ async fn run_turn(
     trace.stage("live_chat_generate_start");
     let mut first_delta_seen = false;
     let mut first_audio_seen = false;
+    // Voice direction: a line's leading "[whispering]" cue applies to all of its
+    // streamed sentences; captions never show cues or vocal events.
+    let mut cues = delivery::CueTracker::default();
     {
         let mut events = std::pin::pin!(client.generate_stream_events(&config.live_chat_id, &gen_body));
         while let Some(event) = events.next().await {
@@ -611,7 +615,8 @@ async fn run_turn(
                             serde_json::json!({ "chars": segment.len() }),
                         );
                     }
-                    if !segment.is_empty() && request.want_tts {
+                    let spoken = cues.next(&segment, true);
+                    if !spoken.speech.is_empty() && request.want_tts {
                         let speaker = stream_speaker
                             .clone()
                             .unwrap_or_else(|| npc::default_stream_speaker(config, request));
@@ -621,10 +626,15 @@ async fn run_turn(
                             native_npc_name: speaker.native_npc_name,
                             character_name: speaker.character_name.clone(),
                             character_id: speaker.character_id,
-                            text: segment.clone(),
+                            text: spoken.caption.clone(),
                             turn: Value::Null,
                         };
-                        let body = synth_body(config, &segment, &line.character_name, false);
+                        let mut body = synth_body(config, &spoken.speech, &line.character_name, false);
+                        let mut chunk_meta: Vec<String> = Vec::new();
+                        if let Some(cue) = &spoken.cue {
+                            body["instructions"] = serde_json::json!(cue);
+                            chunk_meta.push(format!("delivery={cue}"));
+                        }
                         let start = next_index;
                         let mut local: u32 = 0;
                         trace.stage_with(
@@ -641,7 +651,7 @@ async fn run_turn(
                                 }
                                 let index = start + chunk.index.map(|i| i.max(0) as u32).unwrap_or(local);
                                 local += 1;
-                                written.push(sink.audio_chunk(request, &line, &chunk, index, &[])?);
+                                written.push(sink.audio_chunk(request, &line, &chunk, index, &chunk_meta)?);
                                 Ok(())
                             })
                             .await?;
@@ -867,7 +877,7 @@ async fn run_turn(
             request.npc_name.clone(),
         ]),
         audio_filename: audio.map(|w| w.filename.clone()).unwrap_or_default(),
-        text: speaker.text.clone(),
+        text: delivery::caption(&speaker.text),
         error: String::new(),
         player_text: message,
         extra_lines: vec![if audio.is_some() { "0".into() } else { "-1".into() }],
@@ -1173,6 +1183,15 @@ fn generate_body(
             // turn (observed live: looting with total amnesia, re-grabbing the
             // same books forever). Snake_case to match the generate reader.
             "world_event_text": request.metadata.get("world_event_text").cloned().unwrap_or(Value::Null),
+            // Senses + nervous system (HTTP game transport): what the NPC can
+            // see (`vision.landmarks`, `vision.scene_description`), what its
+            // nervous system already did or refused (`nervous`), and whether it
+            // is speaking over the radio (`radio`). Absent → nothing injected.
+            "vision": request.metadata.get("vision").cloned().unwrap_or(Value::Null),
+            "nervous": request.metadata.get("nervous").cloned().unwrap_or(Value::Null),
+            "radio": request.metadata.get("radio").cloned().unwrap_or(json!(false)),
+            // The current mission objective, when the game tracks one.
+            "objective": request.metadata.get("objective").cloned().unwrap_or(Value::Null),
             "errand_summary": request.metadata.get("errand_summary").cloned().unwrap_or(Value::Null),
         },
     })

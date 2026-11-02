@@ -1,0 +1,236 @@
+{
+  "name": "Halo CE",
+  "entries": {
+    "0": {
+      "uid": 0,
+      "key": [
+        "Pillar of Autumn",
+        "Autumn",
+        "ship"
+      ],
+      "comment": "The Pillar of Autumn",
+      "content": "The Pillar of Autumn is the UNSC cruiser that fled Reach and jumped blind to the ringworld. Covenant boarders overran it; the crew abandoned ship in lifeboats and Captain Keyes crash-landed it on the ring.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "1": {
+      "uid": 1,
+      "key": [
+        "lifeboat",
+        "lifeboats",
+        "escape pod",
+        "crash site",
+        "survivors"
+      ],
+      "comment": "Mission: Halo (the first landing)",
+      "content": "After the lifeboat crash, the squad's job is to evade Covenant patrols by moving up into the hills, regroup with other survivors, and scout for the other lifeboats so their Marines can be extracted before the Covenant finds them.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "2": {
+      "uid": 2,
+      "key": [
+        "Truth and Reconciliation",
+        "Keyes",
+        "captain"
+      ],
+      "comment": "Mission: Truth and Reconciliation",
+      "content": "Captain Keyes was taken prisoner aboard the Covenant cruiser Truth and Reconciliation. The squad sneaks up the canyon at night, gets aboard through the gravity lift, and breaks the captain out.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "3": {
+      "uid": 3,
+      "key": [
+        "Silent Cartographer",
+        "cartographer",
+        "map room",
+        "beach"
+      ],
+      "comment": "Mission: The Silent Cartographer",
+      "content": "A beach assault on an island holding the Silent Cartographer, a Forerunner map room. Finding it reveals where the ring's Control Room is.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "4": {
+      "uid": 4,
+      "key": [
+        "Control Room",
+        "Assault on the Control Room"
+      ],
+      "comment": "Mission: Assault on the Control Room",
+      "content": "A long push through snowy canyons and bridges, fighting through Covenant defenses, to reach the ring's Control Room.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "5": {
+      "uid": 5,
+      "key": [
+        "343 Guilty Spark",
+        "Guilty Spark",
+        "Monitor",
+        "swamp"
+      ],
+      "comment": "Mission: 343 Guilty Spark",
+      "content": "In a fog-choked swamp the squad searches for Captain Keyes and his Marines, and finds the Flood instead. The ring's Monitor, 343 Guilty Spark, appears afterwards.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "6": {
+      "uid": 6,
+      "key": [
+        "Library",
+        "Index"
+      ],
+      "comment": "Mission: The Library",
+      "content": "A Forerunner facility crawling with Flood. The goal is to recover the Index, the key needed to activate the ring, while 343 Guilty Spark floats ahead.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "7": {
+      "uid": 7,
+      "key": [
+        "Two Betrayals",
+        "betrayal",
+        "Pulse Generators"
+      ],
+      "comment": "Mission: Two Betrayals",
+      "content": "The truth comes out: firing the ring would wipe out all sentient life to starve the Flood. The new plan is to wreck the ring's pulse generators instead, with the Flood, the Covenant and the Sentinels all in the way.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "8": {
+      "uid": 8,
+      "key": [
+        "The Maw",
+        "reactor",
+        "escape",
+        "Warthog run"
+      ],
+      "comment": "Mission: The Maw",
+      "content": "Back aboard the crashed Pillar of Autumn to overload its reactors and destroy the ring, ending in a flat-out Warthog sprint to a dropship before the countdown runs out.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "9": {
+      "uid": 9,
+      "key": [
+        "Grunt",
+        "Grunts",
+        "Unggoy"
+      ],
+      "comment": "Covenant: Grunts",
+      "content": "Short, squeaky, methane-breathing Covenant infantry. Cowardly when their leader dies, dangerous in numbers and with plasma grenades. Kevin despises them.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "10": {
+      "uid": 10,
+      "key": [
+        "Jackal",
+        "Jackals",
+        "Kig-Yar",
+        "shield"
+      ],
+      "comment": "Covenant: Jackals",
+      "content": "Lanky Covenant skirmishers carrying energy shields. Shoot the hand through the shield's notch, or flank them.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "11": {
+      "uid": 11,
+      "key": [
+        "Elite",
+        "Elites",
+        "Sangheili",
+        "energy sword"
+      ],
+      "comment": "Covenant: Elites",
+      "content": "Tall, shielded Covenant warriors and leaders, sometimes cloaked with energy swords. Drop their shields with plasma, then finish with a headshot. Kevin respects them as real fighters.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "12": {
+      "uid": 12,
+      "key": [
+        "Hunter",
+        "Hunters",
+        "Mgalekgolo"
+      ],
+      "comment": "Covenant: Hunters",
+      "content": "Massive armored pairs with assault cannons and shields. Their weak spot is the exposed orange flesh on the back and neck.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "13": {
+      "uid": 13,
+      "key": [
+        "Flood",
+        "infection form",
+        "combat form"
+      ],
+      "comment": "The Flood",
+      "content": "A parasitic organism sealed inside the ring. Infection forms take over bodies and turn them into combat forms. Shotguns and flamethrowers are best.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "14": {
+      "uid": 14,
+      "key": [
+        "Cortana",
+        "the AI",
+        "radio"
+      ],
+      "comment": "Cortana",
+      "content": "The UNSC AI riding along in the Master Chief's armor. Her voice comes over the radio with objectives and warnings; Kevin hears her too.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "15": {
+      "uid": 15,
+      "key": [
+        "Warthog",
+        "hog",
+        "jeep",
+        "car",
+        "gunner",
+        "seat"
+      ],
+      "comment": "Vehicle: Warthog",
+      "content": "The UNSC four-seat light vehicle: driver, passenger and a rear chain-gun gunner seat. If a seat is taken you need it vacated first.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "16": {
+      "uid": 16,
+      "key": [
+        "Ghost",
+        "Banshee",
+        "Wraith",
+        "Scorpion",
+        "tank"
+      ],
+      "comment": "Other vehicles",
+      "content": "Ghost: fast one-seat Covenant hover bike. Banshee: Covenant flyer. Wraith: Covenant mortar tank. Scorpion: UNSC main battle tank with room for Marines on the sides.",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    }
+  }
+}
